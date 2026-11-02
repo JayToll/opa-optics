@@ -18,7 +18,7 @@ OPA Optics is a browser tool for the Okta Privileged Access console. It groups a
 - [Data handling and security](#data-handling-and-security)
 - [Limitations](#limitations)
 - [Checking results against Okta](#checking-results-against-okta)
-- [Building the bookmarklet](#building-the-bookmarklet)
+- [Repository layout and building](#repository-layout-and-building)
 - [Reporting problems](#reporting-problems)
 - [Licence](#licence)
 
@@ -72,20 +72,22 @@ Choose one method. Don't use more than one at the same time.
 
 ### Option 1: Tampermonkey (recommended)
 
-Runs automatically on every Okta Privileged Access page and can update itself.
+Runs automatically on every Okta Privileged Access page and updates itself when a new version is released.
 
 1. Install the Tampermonkey extension in Chrome or Edge.
 2. Go to `chrome://extensions` (or `edge://extensions`), open Tampermonkey's **Details** and turn on **Allow User Scripts**. If that option isn't there, turn on **Developer mode** on the extensions page instead. If the script installs but never runs, this setting is almost always why.
-3. Open [`src/opa-optics.user.js`](src/opa-optics.user.js) in this repository and click **Raw**. Tampermonkey offers to install it. Click **Install**.
+3. Open the [install link](https://raw.githubusercontent.com/JayToll/opa-optics/main/opa-optics.user.js). Tampermonkey offers to install the script. Click **Install**.
 4. Open your console's home page. The Tampermonkey icon shows **1**, and the server list appears.
 
 The script runs on `https://*.pam.okta.com/t/*` and `https://*.pam.oktapreview.com/t/*`. If your team uses a different address, add a matching `@match` line at the top of the script.
+
+Tampermonkey checks this repository for new versions and offers to update. Updating means running new code in your Okta Privileged Access console, so review the [changes](CHANGELOG.md) first if your organisation requires it.
 
 ### Option 2: Bookmarklet
 
 No extension needed, but you click it each time you open the console.
 
-1. Open the install page: `https://<your-account>.github.io/opa-optics/`
+1. Open the [install page](https://jaytoll.github.io/opa-optics/).
 2. Show your bookmarks bar (Ctrl+Shift+B, or Cmd+Shift+B on a Mac) and drag the **OPA Optics** button onto it.
 3. In the console, click the bookmark. It keeps running as you move around the console. Click it again after a full page reload or after signing in again.
 
@@ -93,7 +95,7 @@ The bookmarklet holds the whole tool, so it is large (about 50 KB). After saving
 
 ### Option 3: Console paste (testing)
 
-Open your browser's developer tools on a console page, paste the contents of `src/opa-optics.user.js` into the Console tab, and press Enter.
+Open your browser's developer tools on a console page, paste the contents of [`opa-optics.user.js`](opa-optics.user.js) into the Console tab, and press Enter.
 
 ---
 
@@ -176,24 +178,31 @@ Before relying on OPA Optics for audit evidence, compare it with Okta's own answ
 
 ---
 
-## Building the bookmarklet
+## Repository layout and building
 
-The bookmarklet is the minified source with a small amount of URL encoding. To rebuild it and confirm it matches the source:
+| Path | What it is |
+| --- | --- |
+| `opa-optics.user.js` | The tool. Readable source, the Tampermonkey install and the update source. No dependencies |
+| `opa-optics-bookmarklet.txt` | The bookmarklet, built from the source |
+| `docs/index.html` | The install page, served by GitHub Pages. Built from the source |
+| `build/` | The build script and install page template |
+
+The bookmarklet is the minified source with a small amount of URL encoding. To rebuild it and the install page after changing the source, with Node.js installed:
 
 ```bash
-npm install --no-save terser
-npx terser src/opa-optics.user.js -c -m --comments false -o build/opa-optics.min.js
-node -e '
-  const fs = require("fs");
-  const code = fs.readFileSync("build/opa-optics.min.js", "utf8").trim().replace(/\n/g, " ");
-  const enc = code.replace(/%/g, "%25").replace(/"/g, "%22").replace(/#/g, "%23")
-                  .replace(/</g, "%3C").replace(/>/g, "%3E").replace(/ /g, "%20");
-  if (decodeURIComponent(enc) !== code) throw new Error("Encoding check failed");
-  fs.writeFileSync("build/opa-optics-bookmarklet.txt", "javascript:" + enc);
-'
+npm install
+npm run build
 ```
 
-The install page embeds the contents of `build/opa-optics-bookmarklet.txt`.
+The build checks that the bookmarklet decodes back to the minified code and that the code parses. Anyone can run it to confirm the published bookmarklet matches the readable source.
+
+### Releasing a new version
+
+1. Change `opa-optics.user.js` and raise its `@version` number. Tampermonkey only offers updates when this number goes up.
+2. Run `npm run build`.
+3. Add the changes to [CHANGELOG.md](CHANGELOG.md).
+4. Commit the source, `opa-optics-bookmarklet.txt` and `docs/index.html` together.
+5. Tag the release, for example `v1.4.2`, and create a GitHub release with the changelog notes.
 
 ---
 

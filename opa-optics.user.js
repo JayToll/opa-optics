@@ -1,10 +1,14 @@
 // ==UserScript==
 // @name         OPA Optics
 // @namespace    opa-optics
-// @version      1.4.1
+// @version      1.4.2
 // @description  Grouped server list, team health checks, per-server access explanations, and per-user server access and enrolled clients, for Okta Privileged Access.
 // @match        https://*.pam.okta.com/t/*
 // @match        https://*.pam.oktapreview.com/t/*
+// @homepageURL  https://github.com/JayToll/opa-optics
+// @supportURL   https://github.com/JayToll/opa-optics/issues
+// @updateURL    https://raw.githubusercontent.com/JayToll/opa-optics/main/opa-optics.user.js
+// @downloadURL  https://raw.githubusercontent.com/JayToll/opa-optics/main/opa-optics.user.js
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==
@@ -24,9 +28,12 @@
  *      that needs an approved request, with the granting policy, rule and group, and a CSV export for access reviews.
  *      Also lists the devices (clients) the user has enrolled, flagging active clients on disabled or deleted users.
  *
+ * Project page: https://github.com/JayToll/opa-optics
+ *
  * How to run:
- *   - Paste the whole file into the browser DevTools console on any /t/{team}/ page, or
- *   - Install it in a userscript manager (for example Tampermonkey) so it runs automatically.
+ *   - Install it in a userscript manager (for example Tampermonkey) so it runs automatically and updates itself, or
+ *   - Use the bookmarklet from https://jaytoll.github.io/opa-optics/, or
+ *   - Paste the whole file into the browser DevTools console on any /t/{team}/ page.
  *
  * Security and data handling:
  *   - Read-only. Makes GET requests to the same Okta Privileged Access host only.

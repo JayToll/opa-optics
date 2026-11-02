@@ -1,0 +1,11 @@
+{
+  "name": "opa-optics",
+  "private": true,
+  "description": "Build scripts for OPA Optics. The tool itself is opa-optics.user.js and has no dependencies.",
+  "scripts": {
+    "build": "node build/build.js"
+  },
+  "devDependencies": {
+    "terser": "5.31.0"
+  }
+}
