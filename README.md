@@ -10,6 +10,7 @@ OPA Optics is a browser tool for the Okta Privileged Access console. It groups a
 
 ## Contents
 
+- [Screenshots](#screenshots)
 - [Features](#features)
 - [Install](#install)
 - [Using it](#using-it)
@@ -66,22 +67,38 @@ On `/t/{team}/users/u/{user}`, a panel shows:
 
 ---
 
+## Screenshots
+
+Shown with fictional demo data.
+
+| Grouped servers | Health tab |
+| --- | --- |
+| ![Servers grouped by your access](docs/screenshots/servers-by-access.png) | ![Team health checks](docs/screenshots/health.png) |
+
+| Why do I have access? | User access |
+| --- | --- |
+| ![Access to a server](docs/screenshots/server-access.png) | ![A user's server access and enrolled clients](docs/screenshots/user-disabled.png) |
+
+---
+
 ## Install
 
 Choose one method. Don't use more than one at the same time.
 
-### Option 1: Tampermonkey (recommended)
+### Option 1: Userscript manager (recommended)
 
-Runs automatically on every Okta Privileged Access page and updates itself when a new version is released.
+Runs automatically on every Okta Privileged Access page and updates itself when a new version is released. Use [Violentmonkey](https://violentmonkey.github.io/) (open source) or Tampermonkey.
 
-1. Install the Tampermonkey extension in Chrome or Edge.
-2. Go to `chrome://extensions` (or `edge://extensions`), open Tampermonkey's **Details** and turn on **Allow User Scripts**. If that option isn't there, turn on **Developer mode** on the extensions page instead. If the script installs but never runs, this setting is almost always why.
-3. Open the [install link](https://raw.githubusercontent.com/JayToll/opa-optics/main/opa-optics.user.js). Tampermonkey offers to install the script. Click **Install**.
-4. Open your console's home page. The Tampermonkey icon shows **1**, and the server list appears.
+1. Install Violentmonkey or Tampermonkey in your browser.
+2. If your browser has an **Allow User Scripts** setting for the extension (Chrome and Edge: the extension's **Details** page), turn it on. On some versions you turn on **Developer mode** on the extensions page instead. If the script installs but never runs, this setting is almost always why.
+3. Open the install link: [`opa-optics.user.js`](https://raw.githubusercontent.com/JayToll/opa-optics/main/opa-optics.user.js). Your userscript manager offers to install it. Click **Install**.
+4. Open your console's home page. The server list appears.
+
+Install from the link rather than a downloaded copy, so updates arrive automatically. If you'd rather review each new version first, turn off automatic updates for the script in your userscript manager.
 
 The script runs on `https://*.pam.okta.com/t/*` and `https://*.pam.oktapreview.com/t/*`. If your team uses a different address, add a matching `@match` line at the top of the script.
 
-Tampermonkey checks this repository for new versions and offers to update. Updating means running new code in your Okta Privileged Access console, so review the [changes](CHANGELOG.md) first if your organisation requires it.
+Your userscript manager checks this repository for new versions and offers to update. Updating means running new code in your Okta Privileged Access console, so review the [changes](CHANGELOG.md) first if your organisation requires it.
 
 ### Option 2: Bookmarklet
 
@@ -151,7 +168,7 @@ Features you can't use are hidden or show a short message. Everything else keeps
 - **CSV exports contain access data.** They include usernames, server names and access details. Store and share them like any other access review evidence. Cells starting with `=`, `+`, `-` or `@` get an apostrophe added, so spreadsheet programs don't run them as formulas.
 - **Isolated display.** Panels are drawn in an isolated layer of the page (a shadow root), and all text from the API is escaped before display.
 
-If your organisation controls browser extensions or scripts, check its rules before installing. Tampermonkey itself can run on every website, which is much broader than OPA Optics needs, so some organisations block it on managed devices.
+If your organisation controls browser extensions or scripts, check its rules before installing. Userscript managers can run on every website, which is much broader than OPA Optics needs, so some organisations block it on managed devices.
 
 ---
 
@@ -163,7 +180,7 @@ If your organisation controls browser extensions or scripts, check its rules bef
 - **Simple label rules only.** It assumes each label selector uses single text values. Selectors with several labels or lists of values haven't been tested against Okta's behaviour.
 - **Conditions are shown, not evaluated.** Access requests, gateways and MFA are listed against each rule, but the tool doesn't check whether a request has been approved.
 - **"Latest agent" means latest on your team**, not Okta's newest release.
-- **Undocumented details.** The tool depends on the console's session cookie name and page addresses, which Okta doesn't document and may change in any release.
+- **Undocumented details.** The tool depends on the console's session cookie name and page addresses, which Okta doesn't document. These rarely change, and when they do the fix is usually small: report it and a new version will follow.
 - **Tested on one team so far.** Reports from other setups are welcome, especially EMEA addresses, large teams and different label conventions.
 
 ---
