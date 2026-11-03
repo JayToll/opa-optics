@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OPA Optics
 // @namespace    opa-optics
-// @version      1.4.2
+// @version      1.4.3
 // @description  Grouped server list, team health checks, per-server access explanations, and per-user server access and enrolled clients, for Okta Privileged Access.
 // @match        https://*.pam.okta.com/t/*
 // @match        https://*.pam.oktapreview.com/t/*
@@ -15,6 +15,8 @@
 
 /*
  * OPA Optics
+ *
+ * Unofficial: not made or supported by Okta.
  *
  * Three features for the Okta Privileged Access console:
  *   1. Home page (/t/{team}/home): a drawer listing servers grouped by project, server type, name prefix, label
@@ -31,7 +33,7 @@
  * Project page: https://github.com/JayToll/opa-optics
  *
  * How to run:
- *   - Install it in a userscript manager (for example Tampermonkey) so it runs automatically and updates itself, or
+ *   - Install it in a userscript manager (Violentmonkey or Tampermonkey) so it runs automatically and updates itself, or
  *   - Use the bookmarklet from https://jaytoll.github.io/opa-optics/, or
  *   - Paste the whole file into the browser DevTools console on any /t/{team}/ page.
  *
@@ -763,6 +765,7 @@
     const status = String(r.user.status || '').toUpperCase();
     userView.root.querySelector('h2').textContent = `Server access for ${r.user.name}`;
     const summary = !r.rows.length ? `<p class="answer no">No policy gives ${esc(r.user.name)} access to any of the ${r.total} servers.</p>`
+      : !standing.length ? `<p class="answer yes">Can request access to ${request.length} of ${r.total} servers, with no standing access.</p>`
       : `<p class="answer yes">Can connect to ${standing.length} of ${r.total} servers${request.length ? `, and can request access to ${request.length} more` : ''}.</p>`;
     body.innerHTML = `${summary}
       <p class="context">In ${r.groups.length} group${r.groups.length == 1 ? '' : 's'}: ${esc(r.groups.map(g => g.name).join(', ') || 'none')}.</p>
