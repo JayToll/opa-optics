@@ -2,6 +2,13 @@
 
 All notable changes to OPA Optics. Versions follow the `@version` number in `opa-optics.user.js`.
 
+## 1.4.3 (2 November 2026)
+
+- Script header now states it is unofficial and not made or supported by Okta.
+- Recommends Violentmonkey (open source) alongside Tampermonkey.
+- User panel wording for users with only on-request access.
+- README screenshots, rendered with fictional demo data.
+
 ## 1.4.2 (2 November 2026)
 
 - Added update and download addresses, so Tampermonkey installs update automatically from this repository.
