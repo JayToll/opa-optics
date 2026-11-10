@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         OPA Optics
 // @namespace    opa-optics
-// @version      1.4.3
-// @description  Grouped server list, team health checks, per-server access explanations, and per-user server access and enrolled clients, for Okta Privileged Access.
+// @version      1.5.2
+// @description  Grouped server list, team health checks, resource unit estimate, per-server access explanations, and per-user server access and enrolled clients, for Okta Privileged Access.
 // @match        https://*.pam.okta.com/t/*
 // @match        https://*.pam.oktapreview.com/t/*
 // @homepageURL  https://github.com/JayToll/opa-optics
@@ -18,17 +18,20 @@
  *
  * Unofficial: not made or supported by Okta.
  *
- * Three features for the Okta Privileged Access console:
+ * Four features for the Okta Privileged Access console:
  *   1. Home page (/t/{team}/home): a drawer listing servers grouped by project, server type, name prefix, label
  *      or (for admins) your access, with search. It opens automatically on the home page (switchable in the
  *      drawer) and can be reopened with the "Grouped servers" button. Clicking a server opens its Accounts page.
  *      For admins, a Health tab checks policies (inactive, matching no servers, nobody in their groups, servers no
  *      policy covers), server agents (not seen recently, behind the latest version) and admin roles, with CSV exports.
- *   2. Server pages (/t/{team}/servers/{id}/...): a panel showing which security policy rules cover the server,
+ *   2. Server pages (/t/{team}/servers/{id}/...): a banner along the bottom of the page (or a side panel) showing which security policy rules cover the server,
  *      which of them grant you access, and why.
  *   3. User pages (/t/{team}/users/u/{user}): the servers that user can reach, split into standing access and access
  *      that needs an approved request, with the granting policy, rule and group, and a CSV export for access reviews.
  *      Also lists the devices (clients) the user has enrolled, flagging active clients on disabled or deleted users.
+ *   4. For admins, a Licence tab in the home drawer estimates resource units (users, servers, SaaS apps, Active
+ *      Directory accounts) using the resource unit calculator's rates, and compares them with the number bought.
+ *      An estimate only: not a quote, and Okta's own count is what is billed.
  *
  * Project page: https://github.com/JayToll/opa-optics
  *
@@ -47,7 +50,8 @@
  *     prefixed with an apostrophe so spreadsheet programs don't treat them as formulas.
  *   - Access results are reconstructed from policy data, not Okta's own evaluation. System labels are derived
  *     from server fields (system.os_type from os_type, system.hostname from hostname).
- *   - Saves the chosen grouping in this site's localStorage under "opa-optics.grouped".
+ *   - Saves the chosen grouping in this site's localStorage under "opa-optics.grouped", and the number of resource
+ *     units bought (per team) under "opa-optics.licence".
  *   - Relies on an undocumented cookie name and console URL structure, which Okta may change without notice.
  */
 (() => {
@@ -68,6 +72,24 @@
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
   const cap = s => s ? s[0].toUpperCase() + s.slice(1) : s;
   const FONT = '-apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+
+  // Width of the console's left-hand menu, so panels placed on the left or along the bottom sit beside it, not over it.
+  // The console's markup isn't documented, so this measures the tall element at the left edge of the page.
+  // If nothing suitable is found it returns 0 and panels use the full window.
+  function navWidth() {
+    const vw = innerWidth, vh = innerHeight;
+    let best = 0;
+    for (const y of [0.3, 0.5, 0.7]) for (const el of document.elementsFromPoint(4, vh * y)) {
+      if (el == document.body || el == document.documentElement || String(el.id).startsWith('opa-optics')) continue;
+      const r = el.getBoundingClientRect();
+      if (r.left <= 1 && r.height >= vh * 0.6 && r.right > best && r.right <= Math.min(400, vw * 0.4)) best = r.right;
+    }
+    return Math.round(best);
+  }
+  const applyLayout = () => { const w = `${navWidth()}px`; for (const h of [panel.host, drawer.host, userView.host]) if (h) h.style.setProperty('--nav', w); };
+  const posSelect = (key, opts) => `<select class="pos" data-set="${key}" aria-label="Panel position" title="Panel position">${
+    opts.map(([v, l]) => `<option value="${v}" ${settings[key] == v ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+  const SIDES = [['right', 'Right'], ['left', 'Left']];
 
   function token() {
     const name = `SFT_logged-in_store_${team()}=`;
@@ -136,7 +158,7 @@
     serverCache = {team: team(), servers};
     return servers;
   }
-  const clearCaches = () => { policyCache = null; serverCache = null; healthCache = null; };
+  const clearCaches = () => { policyCache = null; serverCache = null; healthCache = null; licenceCache = null; };
 
   // ---------- Policy evaluation ----------
   const PRIVILEGE = {
@@ -217,7 +239,33 @@
     .note { color: #8a5a00; }
     details { margin: 4px 0 10px; } summary { cursor: pointer; color: #3a4558; font-weight: 600; padding: 4px 0; }
     .muted { color: #5b6576; } .err { color: #8a3b12; }
-    footer { padding: 8px 12px 12px; color: #5b6576; font-size: 12px; border-top: 1px solid #e6eaf0; }`;
+    footer { padding: 8px 12px 12px; color: #5b6576; font-size: 12px; border-top: 1px solid #e6eaf0; }
+    .panel.left, .panel.dock-left { left: calc(var(--nav, 0px) + 16px); right: auto; }
+    select.pos { font: inherit; font-size: 12px; color: #3a4558; padding: 2px 4px; border: 1px solid #cfd6e0; border-radius: 4px; background: #fff; }`;
+
+  // Server page: a banner along the bottom of the page. Overrides the side-panel layout used by the user panel.
+  // Server page: by default a banner along the bottom of the page, beside the console's left-hand menu.
+  // Can also be docked as a side panel on the right or left.
+  const BANNER_CSS = PANEL_CSS + `
+    .sum { font-weight: 600; } .sum.yes { color: #1f7a4d; } .sum.no { color: #8a3b12; } .sum.wait { color: #5b6576; font-weight: 400; }
+    .answer { display: none; }
+    header { flex-wrap: wrap; }
+    .panel:not(.dock-bottom) .sum { order: 5; flex: 1 1 100%; }
+    .panel:not(.dock-bottom) header h2 { flex: 1 1 100%; white-space: normal; }
+    .panel:not(.dock-bottom) header select.pos { margin-right: auto; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px 16px; }
+    .grid .rule { margin: 0; }
+    details .grid { margin-top: 6px; }
+    .dock-bottom { top: auto; bottom: 0; left: var(--nav, 0px); right: 0; width: auto; max-height: 45vh; border-radius: 0; border-width: 1px 0 0 1px;
+      box-shadow: 0 -6px 24px rgba(29,37,51,.14); display: flex; flex-direction: column; overflow: hidden; }
+    .dock-bottom header { padding: 8px 16px; }
+    .dock-bottom header h2 { flex: 0 1 auto; }
+    .dock-bottom .sum { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dock-bottom .body { flex: 1; overflow: auto; padding: 10px 16px 4px; }
+    .dock-bottom .context { margin: 0 0 8px; }
+    .dock-bottom details { margin: 8px 0 6px; }
+    .dock-bottom footer { padding: 6px 16px 8px; }
+    @media (max-width: 640px) { .dock-bottom { max-height: 60vh; left: 0; } .dock-bottom .sum { white-space: normal; } }`;
 
   const panel = {host: null, root: null, lastServer: null, collapsed: false, dismissed: null, renderId: 0};
 
@@ -226,11 +274,13 @@
     panel.host = document.createElement('div');
     panel.host.id = 'opa-optics-panel';
     panel.root = panel.host.attachShadow({mode: 'open'});
-    panel.root.innerHTML = `<style>${PANEL_CSS}</style><section class="panel${panel.collapsed ? ' collapsed' : ''}" role="complementary" aria-label="Access to this server">
-      <header><h2>Access to this server</h2>
+    panel.collapsed = !!settings.bannerCollapsed;
+    panel.root.innerHTML = `<style>${BANNER_CSS}</style><section class="panel dock-${settings.serverDock}${panel.collapsed ? ' collapsed' : ''}" role="complementary" aria-label="Access to this server">
+      <header><h2>Access to this server</h2><span class="sum wait" aria-live="polite">Checking policies…</span>
+        ${posSelect('serverDock', [['bottom', 'Bottom'], ...SIDES])}
         <button data-act="refresh" title="Reload policies and groups">Refresh</button>
-        <button data-act="collapse" aria-expanded="${!panel.collapsed}" title="Collapse">${panel.collapsed ? '+' : '–'}</button>
-        <button data-act="close" title="Close">×</button></header>
+        <button data-act="collapse" aria-expanded="${!panel.collapsed}" title="${panel.collapsed ? 'Show details' : 'Hide details'}">${panel.collapsed ? 'Show details' : 'Hide details'}</button>
+        <button data-act="close" title="Close" aria-label="Close">×</button></header>
       <div class="body"></div>
       <footer>Worked out from policy data, not Okta's own check.</footer></section>`;
     panel.root.addEventListener('click', e => {
@@ -238,12 +288,20 @@
       if (act == 'close') { panel.host.remove(); panel.lastServer = null; panel.dismissed = serverIdFromUrl(); }
       if (act == 'collapse') {
         panel.collapsed = !panel.collapsed;
+        settings.bannerCollapsed = panel.collapsed; saveSettings();
         panel.root.querySelector('.panel').classList.toggle('collapsed', panel.collapsed);
-        btn.textContent = panel.collapsed ? '+' : '–'; btn.setAttribute('aria-expanded', String(!panel.collapsed));
+        btn.textContent = btn.title = panel.collapsed ? 'Show details' : 'Hide details'; btn.setAttribute('aria-expanded', String(!panel.collapsed));
       }
       if (act == 'refresh') { clearCaches(); renderPanel(serverIdFromUrl(), true); }
     });
+    panel.root.addEventListener('change', e => {
+      if (e.target.dataset.set != 'serverDock') return;
+      settings.serverDock = e.target.value; saveSettings();
+      const el = panel.root.querySelector('.panel');
+      el.classList.remove('dock-bottom', 'dock-right', 'dock-left'); el.classList.add(`dock-${settings.serverDock}`);
+    });
     document.body.appendChild(panel.host);
+    applyLayout();
   }
 
   const ruleHtml = x => `<div class="rule ${x.status}">
@@ -262,14 +320,18 @@
     panel.lastServer = serverId;
     mountPanel();
     const body = panel.root.querySelector('.body');
+    const sum = panel.root.querySelector('.sum');
+    const setSum = (cls, text) => { sum.className = `sum ${cls}`; sum.textContent = text; };
     const id = ++panel.renderId;
-    body.innerHTML = `<p class="muted">Checking policies…</p>`;
+    setSum('wait', 'Checking policies…');
+    body.innerHTML = '';
     try {
       const d = await policyData();
       const server = (await get(`${base()}/servers/${serverId}`)).body;
       if (id !== panel.renderId) return; // moved to another server while loading
       panel.root.querySelector('h2').textContent = `Access to ${server.hostname}`;
       if (!d.access) {
+        setSum('wait', "Your account can't read security policies.");
         body.innerHTML = `<p class="muted">Your account can't read security policies, so access to this server can't be explained here.</p>`;
         return;
       }
@@ -282,15 +344,19 @@
       const answer = !yours.length ? `<p class="answer no">No policy gives you access to this server.</p>`
         : yours.some(x => !x.needsRequest) ? `<p class="answer yes">You can connect through ${rules(yours.length)}.</p>`
         : `<p class="answer yes">You can request access through ${rules(yours.length)}.</p>`;
+      const via = yours.length ? `: ${[...new Set(yours.map(x => x.policy))].join(', ')}` : '';
+      setSum(yours.length ? 'yes' : 'no', (!yours.length ? 'No policy gives you access to this server.'
+        : yours.some(x => !x.needsRequest) ? `You can connect through ${rules(yours.length)}` : `You can request access through ${rules(yours.length)}`) + via);
+      const grid = list => `<div class="grid">${list}</div>`;
       body.innerHTML = `${answer}
         <p class="context">Signed in as ${esc(d.me.name)}. ${esc(cap(server.os_type) || 'Unknown OS')} server in ${esc(rg?.name || 'an unknown resource group')}.</p>
-        ${yours.map(ruleHtml).join('')}
-        ${unknown.length ? `<details open><summary>Couldn't check (${unknown.length})</summary>${unknown.map(ruleHtml).join('')}</details>` : ''}
-        ${others.length ? `<details><summary>Also covers this server, for other groups (${others.length})</summary>${others.map(ruleHtml).join('')}</details>` : ''}
-        ${out.length ? `<details><summary>Ruled out (${out.length})</summary>${out.map(x =>
-          `<div class="rule"><h3>${esc(x.policy)} <span class="r">/ ${esc(x.rule)}</span></h3><p>${REASON[x.status]}. ${esc(x.how)}</p></div>`).join('')}</details>` : ''}`;
+        ${yours.length ? grid(yours.map(ruleHtml).join('')) : ''}
+        ${unknown.length ? `<details open><summary>Couldn't check (${unknown.length})</summary>${grid(unknown.map(ruleHtml).join(''))}</details>` : ''}
+        ${others.length ? `<details><summary>Also covers this server, for other groups (${others.length})</summary>${grid(others.map(ruleHtml).join(''))}</details>` : ''}
+        ${out.length ? `<details><summary>Ruled out (${out.length})</summary>${grid(out.map(x =>
+          `<div class="rule"><h3>${esc(x.policy)} <span class="r">/ ${esc(x.rule)}</span></h3><p>${REASON[x.status]}. ${esc(x.how)}</p></div>`).join(''))}</details>` : ''}`;
     } catch (e) {
-      if (id === panel.renderId) body.innerHTML = `<p class="err">${esc(e.message)}</p>`;
+      if (id === panel.renderId) { setSum('no', "Couldn't check access."); body.innerHTML = `<p class="err">${esc(e.message)}</p>`; }
     }
   }
 
@@ -298,7 +364,7 @@
   // Feature 2: grouped server drawer on the home page
   // =====================================================================
   const STORE_KEY = 'opa-optics.grouped';
-  const settings = Object.assign({by: 'project', segments: 2, label: '', mineOnly: false, autoOpen: true, staleDays: 7}, (() => {
+  const settings = Object.assign({by: 'project', segments: 2, label: '', mineOnly: false, autoOpen: true, staleDays: 7, bannerCollapsed: false, serverDock: 'bottom', side: 'right'}, (() => {
     try { return JSON.parse(localStorage.getItem(STORE_KEY) || '{}'); } catch { return {}; }
   })());
   const saveSettings = () => { try { localStorage.setItem(STORE_KEY, JSON.stringify(settings)); } catch {} };
@@ -310,6 +376,9 @@
     .launch { position: fixed; right: 16px; bottom: 16px; z-index: 2147483000; font: 600 13px/1 ${FONT};
       color: #fff; background: #1d2533; border: 0; border-radius: 20px; padding: 10px 16px; cursor: pointer; box-shadow: 0 4px 14px rgba(29,37,51,.25); }
     .launch:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid #2f6fd6; outline-offset: 2px; }
+    .launch.left { right: auto; left: calc(var(--nav, 0px) + 16px); }
+    .drawer.left { right: auto; left: var(--nav, 0px); border-left: 0; border-right: 1px solid #d5dbe4; box-shadow: 8px 0 28px rgba(29,37,51,.16); }
+    select.pos { font-size: 12px; padding: 2px 4px; }
     .drawer { position: fixed; top: 0; right: 0; height: 100vh; width: min(520px, 100vw); z-index: 2147483001; display: flex; flex-direction: column;
       font: 13px/1.45 ${FONT}; color: #1d2533; background: #fff; border-left: 1px solid #d5dbe4; box-shadow: -8px 0 28px rgba(29,37,51,.16); }
     header { padding: 14px 16px 10px; border-bottom: 1px solid #e6eaf0; }
@@ -350,6 +419,19 @@
     .item.flag { box-shadow: inset 3px 0 0 #b7791f; }
     .fine { padding: 4px 16px 4px 34px; color: #1f7a4d; }
     .hnote { padding: 2px 16px 0; color: #5b6576; font-size: 12px; }
+    .ltable { margin: 8px 16px 0; border: 1px solid #e6eaf0; border-radius: 6px; }
+    .lrow { display: grid; grid-template-columns: 1fr 84px 52px 56px; gap: 8px; align-items: start; padding: 8px 10px; border-top: 1px solid #eef1f5; }
+    .lrow:first-child { border-top: 0; }
+    .lh { color: #5b6576; font-size: 12px; font-weight: 600; padding-top: 6px; padding-bottom: 6px; background: #f8fafc; }
+    .lname { font-weight: 600; } .lname .sub { display: block; font-weight: 400; color: #5b6576; font-size: 12px; }
+    .lin input, .lbuy input { font: inherit; width: 100%; padding: 4px 6px; border: 1px solid #cfd6e0; border-radius: 4px; }
+    .lrate { color: #5b6576; padding-top: 5px; } .lru { text-align: right; font-weight: 600; padding-top: 5px; font-variant-numeric: tabular-nums; }
+    .lh div:last-child, .ltotal div:last-child { text-align: right; }
+    .ltotal { font-weight: 700; background: #f8fafc; }
+    .lbuy { margin: 12px 16px 4px; } .lbuy label { font-weight: 600; } .lbuy input { width: 110px; }
+    .lstatus { margin: 8px 0 0; } .ok { color: #1f7a4d; font-weight: 600; } .over { color: #a33a12; font-weight: 600; }
+    .vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    button.mini[disabled] { opacity: .5; cursor: default; }
     @media (prefers-reduced-motion: no-preference) { .drawer { animation: in .16s ease-out; } @keyframes in { from { transform: translateX(16px); opacity: 0; } } }`;
 
   const drawer = {host: null, root: null, open: false, query: '', data: null, wasHome: false, tab: 'servers'};
@@ -365,6 +447,7 @@
       if (e.key == 'Escape' && drawer.open) { drawer.open = false; drawDrawer(); drawer.root.querySelector('.launch').focus(); }
     });
     document.body.appendChild(drawer.host);
+    applyLayout();
   }
 
   async function loadDrawerData() {
@@ -413,8 +496,9 @@
   function drawDrawer() {
     const slot = drawer.root.querySelector('.slot');
     drawer.root.querySelector('.launch').setAttribute('aria-expanded', String(drawer.open));
+    drawer.root.querySelector('.launch').classList.toggle('left', settings.side == 'left');
     if (!drawer.open) { slot.innerHTML = ''; return; }
-    const shell = inner => `<section class="drawer" role="region" aria-label="Grouped servers">${inner}</section>`;
+    const shell = inner => `<section class="drawer${settings.side == 'left' ? ' left' : ''}" role="region" aria-label="Grouped servers">${inner}</section>`;
     if (!drawer.data || drawer.data.team != team()) {
       slot.innerHTML = shell(`<p class="msg">Loading servers…</p>`);
       loadDrawerData().then(drawDrawer).catch(e => { slot.innerHTML = shell(`<p class="msg err">${esc(e.message)}</p>`); });
@@ -422,8 +506,9 @@
     }
     const {servers, hasAccess} = drawer.data;
     const tabs = hasAccess ? `<div class="tabs" role="tablist">
-        <button class="tab" role="tab" data-tab="servers" aria-selected="${drawer.tab != 'health'}">Servers</button>
-        <button class="tab" role="tab" data-tab="health" aria-selected="${drawer.tab == 'health'}">Health</button></div>` : '';
+        <button class="tab" role="tab" data-tab="servers" aria-selected="${!['health', 'licence'].includes(drawer.tab)}">Servers</button>
+        <button class="tab" role="tab" data-tab="health" aria-selected="${drawer.tab == 'health'}">Health</button>
+        <button class="tab" role="tab" data-tab="licence" aria-selected="${drawer.tab == 'licence'}">Licence</button></div>` : '';
     const wireCommon = () => {
       slot.querySelector('[data-act=close]').addEventListener('click', () => { drawer.open = false; drawDrawer(); });
       slot.querySelector('[data-act=refresh]').addEventListener('click', () => { clearCaches(); drawer.data = null; drawDrawer(); });
@@ -434,10 +519,27 @@
         saveSettings(); drawDrawer();
       }));
     };
+    if (drawer.tab == 'licence' && hasAccess) {
+      const ready = licenceCache && licenceCache.team == team();
+      slot.innerHTML = shell(`
+        <header><div class="top"><h2>Resource units</h2>
+          <button class="mini" data-export="licence" ${ready ? '' : 'disabled'}>Export CSV</button>
+          ${posSelect('side', SIDES)}
+          <button class="x" data-act="refresh" title="Count again">Refresh</button>
+          <button class="x close" data-act="close" aria-label="Close">×</button></div>${tabs}</header>
+        <div class="list">${ready ? licenceHtml(licenceCache) : '<p class="msg">Counting users, servers, SaaS apps and Active Directory accounts…</p>'}</div>
+        <footer>Estimate only, from the resource unit calculator's rates. Not an official quote.</footer>`);
+      wireCommon();
+      if (ready) { wireLicence(slot); slot.querySelector('[data-export=licence]').addEventListener('click', exportLicence); }
+      else loadLicence().then(() => { if (drawer.open && drawer.tab == 'licence') drawDrawer(); })
+        .catch(e => { const l = slot.querySelector('.list'); if (l) l.innerHTML = `<p class="msg err">${esc(e.message)}</p>`; });
+      return;
+    }
     if (drawer.tab == 'health' && hasAccess) {
       const ready = healthCache && healthCache.team == team();
       slot.innerHTML = shell(`
         <header><div class="top"><h2>Team health</h2>
+          ${posSelect('side', SIDES)}
           <button class="x" data-act="refresh" title="Reload servers, policies and roles">Refresh</button>
           <button class="x close" data-act="close" aria-label="Close">×</button></div>${tabs}</header>
         <div class="list">${ready ? healthHtml(healthCache) : '<p class="msg">Checking policies, servers and roles…</p>'}</div>
@@ -453,7 +555,8 @@
     if ((settings.by == 'label' && !keys.length) || (settings.by == 'access' && !hasAccess)) settings.by = 'project';
     slot.innerHTML = shell(`
       <header><div class="top"><h2>Servers <span class="count">${servers.length}</span></h2>
-        <button class="x" data-act="refresh" title="Reload servers and policies">Refresh</button>
+        ${posSelect('side', SIDES)}
+          <button class="x" data-act="refresh" title="Reload servers and policies">Refresh</button>
         <button class="x close" data-act="close" aria-label="Close">×</button></div>${tabs}
         <div class="controls">
           <input type="search" placeholder="Search by name, project, OS or label" value="${esc(drawer.query)}" aria-label="Search servers">
@@ -643,6 +746,152 @@
   }
 
   // =====================================================================
+  // Feature 5: resource unit (licence) estimate, shown in the drawer's Licence tab
+  // =====================================================================
+  // Rates from the Okta Privileged Access resource unit calculator. An estimate only: Okta's own count is what is billed.
+  const RU = {
+    users:   {label: 'Users', rate: 0.5,  unit: 'user'},
+    servers: {label: 'Servers', rate: 1, unit: 'server'},
+    saas:    {label: 'SaaS apps', rate: 35, unit: 'app', cap: 25},
+    ad:      {label: 'Active Directory accounts', rate: 0.25, unit: 'account'}
+  };
+  const LIC_KEY = 'opa-optics.licence';
+  const licStore = (() => { try { return JSON.parse(localStorage.getItem(LIC_KEY) || '{}'); } catch { return {}; } })();
+  const saveLic = () => { try { localStorage.setItem(LIC_KEY, JSON.stringify(licStore)); } catch {} };
+  let licenceCache = null;
+  const licOverrides = {}; // per team, this page session only, so an old manual figure is never mistaken for a current count
+  const notZeroDate = t => t && !String(t).startsWith('0001');
+  const optional = p => p.catch(e => (e.status == 401 || e.status == 403 || e.status == 404) ? null : Promise.reject(e));
+
+  async function loadLicence() {
+    if (licenceCache && licenceCache.team == team()) return licenceCache;
+    const b = base();
+    const [servers, users, serviceUsers, apps, adAccounts] = await Promise.all([
+      serverList(), optional(all(`${b}/users?status=ACTIVE`)), optional(all(`${b}/service_users`)),
+      optional(all(`${b}/connections/saas_apps`)), optional(all(`${b}/all_active_directory_accounts`))]);
+
+    // Users: active human users plus active service users, each counted once.
+    let userCount = null, humanCount = null, serviceCount = null;
+    if (users) {
+      const byId = new Map();
+      for (const u of users) if (isActiveStatus(u.status) && !notZeroDate(u.deleted_at)) byId.set(u.id, u);
+      for (const u of serviceUsers || []) if (isActiveStatus(u.status) && !notZeroDate(u.deleted_at)) byId.set(u.id, {...u, user_type: 'service'});
+      const list = [...byId.values()];
+      serviceCount = list.filter(u => u.user_type == 'service').length;
+      humanCount = list.length - serviceCount;
+      userCount = list.length;
+    }
+
+    // Servers: active and seen in the last 24 hours. A snapshot, not Okta's 24-hour average.
+    const reporting = servers.filter(s => String(s.state || '').toUpperCase() == 'ACTIVE' && daysSince(s.last_seen) !== null && Date.now() - new Date(s.last_seen) < 864e5);
+
+    // SaaS apps: connected app instances, several instances of the same app count once, Okta itself excluded.
+    let appNames = null;
+    if (apps) {
+      const names = new Map();
+      for (const a of apps) {
+        const name = a.global_app_name || a.app_instance_name || a.id;
+        if (/^okta$/i.test(String(name))) continue;
+        (names.get(name) || names.set(name, []).get(name)).push(a.app_instance_name || name);
+      }
+      appNames = [...names].map(([name, instances]) => ({name, instances})).sort((x, y) => x.name.localeCompare(y.name));
+    }
+
+    // AD accounts: accounts brought under management (assigned to a project, or with a management date).
+    let adManaged = null;
+    if (adAccounts) adManaged = adAccounts.filter(a => a.project?.id || notZeroDate(a.brought_under_management_at));
+
+    licenceCache = {team: team(), at: new Date(),
+      found: {users: userCount, servers: reporting.length, saas: appNames ? appNames.length : null, ad: adManaged ? adManaged.length : null},
+      humanCount, serviceCount, serversTotal: servers.length, appNames, adTotal: adAccounts ? adAccounts.length : null};
+    return licenceCache;
+  }
+
+  function licenceFigures(l) {
+    const o = licOverrides[l.team] || {};
+    const rows = Object.entries(RU).map(([k, r]) => {
+      const manual = o[k] !== undefined && o[k] !== '';
+      const count = manual ? Math.max(0, Number(o[k]) || 0) : (l.found[k] ?? 0);
+      const charged = r.cap ? Math.min(count, r.cap) : count;
+      return {k, ...r, found: l.found[k], manual, count, charged, ru: charged * r.rate};
+    });
+    const total = Math.ceil(rows.reduce((n, r) => n + r.ru, 0) - 1e-9);
+    const purchased = Number((licStore[l.team] || {}).purchased) || 0;
+    return {rows, total, purchased, ud: o.users !== undefined && o.users !== '' ? null : l.humanCount};
+  }
+
+  const fmtRu = n => Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0$/, '');
+
+  function licenceHtml(l) {
+    const f = licenceFigures(l);
+    const o = licOverrides[l.team] || {};
+    const src = {
+      users: l.found.users === null ? "Your account can't list users. Enter a figure."
+        : `${l.humanCount} active user${l.humanCount == 1 ? '' : 's'} and ${l.serviceCount} active service user${l.serviceCount == 1 ? '' : 's'}.`,
+      servers: `${l.found.servers} of ${l.serversTotal} servers are active and checked in within 24 hours. Okta bills the daily average, and the highest daily average for elastic fleets, so enter that if your fleet scales.`,
+      saas: l.found.saas === null ? "Your account can't list SaaS apps. Enter a figure."
+        : l.appNames.length ? `${l.appNames.map(a => a.instances.length > 1 ? `${a.name} (${a.instances.length} instances)` : a.name).join(', ')}. Charged for up to 25.` : 'No SaaS apps connected.',
+      ad: l.found.ad === null ? "Your account can't list Active Directory accounts. Enter a figure."
+        : `${l.found.ad} managed account${l.found.ad == 1 ? '' : 's'} of ${l.adTotal} discovered.`
+    };
+    const rows = f.rows.map(r => `
+      <div class="lrow">
+        <div class="lname">${esc(r.label)}<span class="sub">${esc(src[r.k])}</span></div>
+        <label class="lin"><span class="vh">${esc(r.label)} count</span><input type="number" min="0" step="1" inputmode="numeric" data-lic="${r.k}" value="${esc(o[r.k] ?? '')}" placeholder="${esc(r.found ?? 0)}"></label>
+        <div class="lrate">× ${fmtRu(r.rate)}</div>
+        <div class="lru" data-ru="${r.k}">${fmtRu(r.ru)}</div>
+      </div>`).join('');
+    return `<p class="hnote">Counted ${esc(l.at.toLocaleString())}. Type over a count to try a different figure. Leave it blank to use the count found.</p>
+      <div class="ltable">
+        <div class="lrow lh"><div>Resource</div><div>Count</div><div>Rate</div><div>RUs</div></div>
+        ${rows}
+        <div class="lrow ltotal"><div>Total, rounded up</div><div></div><div></div><div data-ru="total">${f.total}</div></div>
+      </div>
+      <div class="lbuy">
+        <label>Resource units bought <input type="number" min="0" step="1" inputmode="numeric" data-lic="purchased" value="${esc((licStore[l.team] || {}).purchased ?? '')}" placeholder="0"></label>
+        <p class="lstatus" data-lic-status>${licenceStatus(f)}</p>
+      </div>
+      <p class="hnote" data-lic-ud>${udNote(f)}</p>
+      <p class="hnote">An estimate, not a quote. It doesn't replace quoting in CPQ, and Okta's own count is what is billed. Users are active users in this team only; users Okta shows as locked out, password expired or suspended are counted if they are active here. Okta service accounts (Universal Directory accounts) aren't counted.</p>`;
+  }
+
+  function licenceStatus(f) {
+    if (!f.purchased) return `Estimated use: <b>${f.total} RUs</b>. Enter the number bought to compare.`;
+    const d = f.purchased - f.total;
+    const pct = Math.round(f.total / f.purchased * 100);
+    return d >= 0 ? `<span class="ok">Within licence:</span> ${f.total} of ${f.purchased} RUs (${pct}%), ${d} spare.`
+      : `<span class="over">Over licence:</span> ${f.total} of ${f.purchased} RUs (${pct}%), ${-d} over.`;
+  }
+  const udNote = f => f.ud === null ? 'Universal Directory licences are also needed for each user, not counting service users.'
+    : `Universal Directory licences are also needed for each user, not counting service users: ${f.ud} by this count.`;
+
+  function wireLicence(slot) {
+    const l = licenceCache;
+    slot.querySelectorAll('[data-lic]').forEach(el => el.addEventListener('input', () => {
+      const k = el.dataset.lic;
+      if (k == 'purchased') { (licStore[l.team] ||= {}).purchased = el.value; saveLic(); }
+      else (licOverrides[l.team] ||= {})[k] = el.value;
+      const f = licenceFigures(l);
+      for (const r of f.rows) slot.querySelector(`[data-ru="${r.k}"]`).textContent = fmtRu(r.ru);
+      slot.querySelector('[data-ru=total]').textContent = f.total;
+      slot.querySelector('[data-lic-status]').innerHTML = licenceStatus(f);
+      slot.querySelector('[data-lic-ud]').textContent = udNote(f);
+    }));
+  }
+
+  function exportLicence() {
+    const l = licenceCache;
+    if (!l) return;
+    const f = licenceFigures(l), at = l.at.toISOString();
+    const rows = f.rows.map(r => [r.label, r.found ?? 'not readable', r.manual ? r.count : '', r.charged, r.rate, r.ru, at]);
+    rows.push(['Total (rounded up)', '', '', '', '', f.total, at]);
+    if (f.purchased) rows.push(['Resource units bought', '', '', '', '', f.purchased, at]);
+    if (l.appNames) for (const a of l.appNames) rows.push([`SaaS app: ${a.name}`, a.instances.length, '', '', '', '', at]);
+    downloadCsv(`OPA resource units - ${team()} - ${at.slice(0, 10)}.csv`,
+      ['resource', 'count_found', 'count_entered', 'count_charged', 'ru_per_unit', 'resource_units', 'counted_at'], rows);
+  }
+
+  // =====================================================================
   // Feature 3: a user's server access on user pages
   // =====================================================================
   const userKeyFromUrl = () => { const m = location.pathname.match(/^\/t\/[^\/]+\/users\/u\/([^\/?#]+)/); return m ? decodeURIComponent(m[1]) : null; };
@@ -735,8 +984,9 @@
     userView.host = document.createElement('div');
     userView.host.id = 'opa-optics-user';
     userView.root = userView.host.attachShadow({mode: 'open'});
-    userView.root.innerHTML = `<style>${USER_CSS}</style><section class="panel${userView.collapsed ? ' collapsed' : ''}" role="complementary" aria-label="Server access for this user">
+    userView.root.innerHTML = `<style>${USER_CSS}</style><section class="panel${settings.side == 'left' ? ' left' : ''}${userView.collapsed ? ' collapsed' : ''}" role="complementary" aria-label="Server access for this user">
       <header><h2>Server access</h2>
+        ${posSelect('side', SIDES)}
         <button data-act="refresh" title="Reload policies, groups and servers">Refresh</button>
         <button data-act="collapse" aria-expanded="${!userView.collapsed}" title="Collapse">${userView.collapsed ? '+' : '–'}</button>
         <button data-act="close" title="Close">×</button></header>
@@ -754,9 +1004,15 @@
       if (act == 'export' && userView.result) exportUserCsv(userView.result);
     });
     userView.root.addEventListener('change', e => {
+      if (e.target.dataset.set == 'side') {
+        settings.side = e.target.value; saveSettings();
+        userView.root.querySelector('.panel').classList.toggle('left', settings.side == 'left');
+        return;
+      }
       if (e.target.dataset.set == 'by') { userView.by = e.target.value; drawUser(); }
     });
     document.body.appendChild(userView.host);
+    applyLayout();
   }
 
   function drawUser() {
@@ -826,6 +1082,7 @@
     if (userView.dismissed && userKey !== userView.dismissed) userView.dismissed = null;
     if (userKey) renderUser(userKey);
     else if (userView.host) { userView.host.remove(); userView.lastUser = null; }
+    applyLayout(); // the console's menu can be opened, closed or resized
   }
   window.opaOptics = {
     start() { if (!timer) timer = setInterval(tick, 1000); tick(); },
