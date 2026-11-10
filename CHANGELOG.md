@@ -2,6 +2,22 @@
 
 All notable changes to OPA Optics. Versions follow the `@version` number in `opa-optics.user.js`.
 
+## 1.5.2 (10 November 2026)
+
+- The server page banner now starts where the console's left-hand menu ends, so it no longer covers the menu.
+- New **Position** setting on each panel. The server panel can sit at the bottom, right or left. The grouped server list and user panel can sit on the right or left. Left places them beside the console's menu, not over it. Your choices are remembered.
+
+## 1.5.1 (10 November 2026)
+
+- Server pages: the access panel is now a banner along the bottom of the page. The answer and the policies giving you access show in the banner's top line, so it's still useful with details hidden. Your show or hide choice is remembered.
+
+## 1.5.0 (10 November 2026)
+
+- New Licence tab for admins: estimates resource units from active users and service users, servers checked in within 24 hours, connected SaaS apps and managed Active Directory accounts, using the resource unit calculator's rates.
+- Type over any count to try a different figure, for example the highest daily server average for elastic fleets.
+- Enter the number of resource units bought to see spare capacity or overage. Saved per team in your browser.
+- Shows how many Universal Directory licences the users need, and exports the estimate as CSV.
+
 ## 1.4.3 (2 November 2026)
 
 - Script header now states it is unofficial and not made or supported by Okta.
